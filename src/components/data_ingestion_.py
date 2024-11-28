@@ -8,7 +8,6 @@ from datetime import datetime
 import numpy as np
 import wget
 from zipfile import ZipFile
-
 from sklearn.model_selection import train_test_split
 from dataclasses import dataclass
 
@@ -111,10 +110,8 @@ def transformation_cotacaohist_b3(path_data):
 
     Parâmetros:
         path_data (str): Caminho base para o diretório onde estão armazenados os arquivos de cotações.
-
-    Retorna:
-        None
     """
+
     diretorio = os.path.join(path_data, "cotacoes_historicas")
     lista_dados_acoes = []
 
@@ -147,6 +144,46 @@ def transformation_cotacaohist_b3(path_data):
             print(f"Erro ao concatenar ou salvar os dados: {e}")
     else:
         print("Nenhum dado foi consolidado. Verifique se os arquivos estão no diretório correto.")
+
+def select_final3():
+    # Caminhos para os arquivos de dados
+    caminho_cotacao_h = f"{path_data}resume_cotacao_hist/resume_cotacao_hist.csv"
+    caminho_cnpj_b3 = f"{path_data}cnpj_acoes_b3.xlsx"
+
+    # Carrega o arquivo de cotações históricas
+    preco_acoes_todos_os_anos = pd.read_csv(caminho_cotacao_h)
+
+    # Filtrando apenas as colunas desejadas
+    colunas_desejadas = ['data_pregao', 'cod_negociacao', 'noma_empresa', 'preco_ultimo_negocio']
+    preco_acoes = preco_acoes_todos_os_anos[colunas_desejadas]
+
+    # Filtrando apenas as empresas com cod_negociacao terminando em '3'
+    preco_acoes = preco_acoes[preco_acoes['cod_negociacao'].str.endswith('3')]
+
+    # Filtrando códigos de negociação que terminam exatamente com '3'
+    preco_acoes_final3 = preco_acoes[preco_acoes['cod_negociacao'].str.match(r'^[A-Z]{4}3$')].copy()
+
+    # Carrega o arquivo Excel com os CNPJs e tickers
+    df_cnpj_acoes_b3 = pd.read_excel(caminho_cnpj_b3, header=1)
+
+    # Criar o dicionário de mapeamento do Ticker para o CNPJ
+    ticker_to_cnpj = dict(zip(df_cnpj_acoes_b3['Ticker'], df_cnpj_acoes_b3['CNPJ']))
+
+    # Adicionar a coluna CNPJ ao DataFrame preco_acoes_final3
+    preco_acoes_final3['CNPJ'] = preco_acoes_final3['cod_negociacao'].map(ticker_to_cnpj)
+
+    # Reorganizar as colunas para colocar a coluna CNPJ antes de cod_negociacao
+    colunas_ordenadas = ['data_pregao', 'CNPJ', 'cod_negociacao', 'noma_empresa', 'preco_ultimo_negocio']
+    preco_acoes_final3_cnpj = preco_acoes_final3[colunas_ordenadas]
+
+    # Verifica e cria o diretório de saída, se não existir
+    output_dir = os.path.join(path_data, "resume_cotacao_hist")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Salva o DataFrame consolidado
+    output_path = os.path.join(output_dir, "preco_acoes_final3_cnpj.csv")
+    preco_acoes_final3_cnpj.to_csv(output_path, index=False, encoding='latin1')
+    print(f"Dados consolidados salvos em: {output_path}")      
  
 
 ##-------------------------------------------##
@@ -331,15 +368,239 @@ def balance_resume_data():
 
     ## Nova Função ---- Balanço Estudo
 
+def balance_dre_metrics():
 
-    ...
+        # Caminhos para os arquivos de ativo e passivo
+        caminho_balance = f"{path_data}balance_resume/df_balancedata_tri_final.csv"
+        caminho_dre = f"{path_data}dre_resume/dre_tri_res.csv" 
+        caminho_cotacao = f"{path_data}resume_cotacao_hist/preco_acoes_final3_cnpj.csv"       
+    
+        # Carrega os arquivos de ativo e passivo sem configurações adicionais
+        df_balance_resume_tri = pd.read_csv(caminho_balance)
+        df_dre = pd.read_csv(caminho_dre)
+        cotacao_hist = pd.read_csv(caminho_cotacao)
+        
+
+        # Realizar a união das duas tabelas com base em 'CNPJ_CIA' e 'DT_FIM_EXERC'
+        df_merged = pd.merge(df_dre, df_balance_resume_tri, on=['CNPJ', 'DT_FIM_EXERC'], how='inner')
+
+        # Remover as colunas 'Unnamed' geradas pelo índice e colunas duplicadas
+        df_merged = df_merged.drop(columns=['DENOM_CIA_y', 'CD_CVM_y'])
+
+        # Renomear as colunas que permaneceram com sufixo para seus nomes originais
+        df_cleaned = df_merged.rename(columns={'DENOM_CIA_x': 'DENOM_CIA','CD_CVM_x': 'CD_CVM'})
+
+        colunas_para_manter = [
+            'CNPJ', 
+            'Ticker_x', 
+            'DENOM_CIA', 
+            'CD_CVM', 
+            'DT_FIM_EXERC', 
+            'Resultado Operacional Consolidado', 
+            'Lucro/Prejuízo Consolidado',
+            '1 - Ativo Total', 
+            '1.01 - Ativo Circulante', 
+            'Ativo_Nao_Circulante_Unificado', 
+            '2.01 - Passivo Circulante',
+            '2.02 - Passivo Não Circulante', 
+            'Patrimonio_Liquido_Unificado' 
+        ]
+
+        df_cleaned = df_cleaned[colunas_para_manter]
+
+        #Inícios Calculos --------------#
+
+        # Supondo que df_cleaned já esteja definido e contenha as colunas mencionadas
+
+        # 1. Calcular Passivo Total (se ainda não estiver calculado)
+        df_cleaned['Passivo Total'] = df_cleaned['2.01 - Passivo Circulante'].fillna(0) + df_cleaned['2.02 - Passivo Não Circulante'].fillna(0)
+
+        # 2. Calcular ROE (Return on Equity)
+        df_cleaned['ROE (%)'] = (df_cleaned['Lucro/Prejuízo Consolidado'] / df_cleaned['Patrimonio_Liquido_Unificado']) * 100
+
+        # 3. Calcular ROA (Return on Assets)
+        df_cleaned['ROA (%)'] = (df_cleaned['Lucro/Prejuízo Consolidado'] / df_cleaned['1 - Ativo Total']) * 100
+
+        # 4. Calcular Liquidez Corrente
+        df_cleaned['Liquidez Corrente'] = df_cleaned['1.01 - Ativo Circulante'] / df_cleaned['2.01 - Passivo Circulante']
+
+        # 5. Calcular Grau de Endividamento (Debt to Equity Ratio)
+        df_cleaned['Endividamento'] = df_cleaned['Passivo Total'] / df_cleaned['Patrimonio_Liquido_Unificado']
+
+        # 6. Calcular Cobertura de Passivos
+        df_cleaned['Cobertura de Passivos'] = df_cleaned['1.01 - Ativo Circulante'] / df_cleaned['Passivo Total']
+
+        # 7. Calcular ROC (Return on Capital)
+        df_cleaned['ROC (%)'] = (df_cleaned['Lucro/Prejuízo Consolidado'] / 
+                                (df_cleaned['1 - Ativo Total'] - df_cleaned['Passivo Total'])) * 100
+
+        # 8. Calcular Equity Ratio
+        df_cleaned['Equity_Ratio'] = df_cleaned['Patrimonio_Liquido_Unificado'] / df_cleaned['1 - Ativo Total']
+
+        # 9. Calcular Debt to Asset Ratio
+        df_cleaned['Debt_to_Asset_Ratio'] = df_cleaned['Passivo Total'] / df_cleaned['1 - Ativo Total']
+
+        # 10. Calcular Capital de Giro (Working Capital)
+        df_cleaned['Working_Capital'] = df_cleaned['1.01 - Ativo Circulante'] - df_cleaned['2.01 - Passivo Circulante']
+
+        # 11. Calcular Solvency Ratio
+        df_cleaned['Solvency_Ratio'] = df_cleaned['1 - Ativo Total'] / df_cleaned['Passivo Total']
+
+        # 12. Calcular Índice de Endividamento de Longo Prazo (Long-term Debt Ratio)
+        df_cleaned['Long_Term_Debt_Ratio'] = df_cleaned['2.02 - Passivo Não Circulante'] / df_cleaned['1 - Ativo Total']
+
+        # 13. Calcular Índice de Endividamento de Curto Prazo (Short-term Debt Ratio)
+        df_cleaned['Short_Term_Debt_Ratio'] = df_cleaned['2.01 - Passivo Circulante'] / df_cleaned['1 - Ativo Total']
+
+        # 14. Calcular Índice de Eficiência Operacional (Operating Efficiency Ratio)
+        df_cleaned['Operating_Efficiency_Ratio'] = df_cleaned['Resultado Operacional Consolidado'] / df_cleaned['1 - Ativo Total']
+
+        # 15. Calcular Operating Profit Margin
+        df_cleaned['Operating_Profit_Margin (%)'] = (df_cleaned['Resultado Operacional Consolidado'] / df_cleaned['1 - Ativo Total']) * 100
+
+        # Indicadores Adicionais
+
+        # 16. Calcular Equity Multiplier
+        df_cleaned['Equity_Multiplier'] = df_cleaned['1 - Ativo Total'] / df_cleaned['Patrimonio_Liquido_Unificado']
+
+        # 17. Calcular Capital Employed
+        df_cleaned['Capital_Employed'] = df_cleaned['1 - Ativo Total'] - df_cleaned['2.01 - Passivo Circulante']
+
+        # 18. Calcular Debt to Capital Ratio
+        df_cleaned['Debt_to_Capital_Ratio'] = df_cleaned['Passivo Total'] / (df_cleaned['Passivo Total'] + df_cleaned['Patrimonio_Liquido_Unificado'])
+
+        # 19. Calcular Capital to Debt Ratio
+        df_cleaned['Capital_to_Debt_Ratio'] = df_cleaned['Patrimonio_Liquido_Unificado'] / df_cleaned['Passivo Total']
+
+        # 20. Calcular Profitability Index
+        df_cleaned['Profitability_Index'] = df_cleaned['Lucro/Prejuízo Consolidado'] / df_cleaned['1 - Ativo Total']
+
+        # 21. Calcular Financial Leverage Ratio
+        df_cleaned['Financial_Leverage_Ratio'] = df_cleaned['1 - Ativo Total'] / df_cleaned['Patrimonio_Liquido_Unificado']
+
+        colunas_desejadas = [
+            'CNPJ', 
+            'Ticker_x', 
+            'DENOM_CIA', 
+            'CD_CVM', 
+            'DT_FIM_EXERC',
+            'Resultado Operacional Consolidado', 
+            'Lucro/Prejuízo Consolidado',
+            '1 - Ativo Total', 
+            '1.01 - Ativo Circulante',
+            'Ativo_Nao_Circulante_Unificado',
+            'Passivo Total',  # Vírgula adicionada aqui
+            '2.01 - Passivo Circulante',
+            '2.02 - Passivo Não Circulante', 
+            'Patrimonio_Liquido_Unificado',   
+            'ROE (%)', 
+            'ROA (%)',
+            'ROC (%)',
+            'Liquidez Corrente',
+            'Endividamento', 
+            'Cobertura de Passivos',  
+            'Equity_Ratio',
+            'Debt_to_Asset_Ratio', 
+            'Working_Capital', 
+            'Solvency_Ratio',
+            'Long_Term_Debt_Ratio', 
+            'Short_Term_Debt_Ratio',
+            'Operating_Efficiency_Ratio', 
+            'Operating_Profit_Margin (%)',
+            'Equity_Multiplier',
+            'Capital_Employed',
+            'Debt_to_Capital_Ratio',
+            'Capital_to_Debt_Ratio',
+            'Profitability_Index',
+            'Financial_Leverage_Ratio'
+        ]
+
+        # Reordenar as colunas do DataFrame
+        df_cleaned = df_cleaned[colunas_desejadas]
+
+        # Ajustar a configuração global de exibição para 4 casas decimais
+        pd.set_option('display.float_format', '{:.4f}'.format)
+
+        # Lista das colunas que você deseja arredondar para 4 casas decimais
+        colunas_para_arredondar = [
+            'ROE (%)', 'ROA (%)', 'Liquidez Corrente', 'Endividamento', 
+            'Cobertura de Passivos', 'ROC (%)', 'Equity_Ratio',
+            'Debt_to_Asset_Ratio', 'Working_Capital', 'Solvency_Ratio',
+            'Long_Term_Debt_Ratio', 'Short_Term_Debt_Ratio',
+            'Operating_Efficiency_Ratio', 'Operating_Profit_Margin (%)',
+            'Equity_Multiplier', 'Capital_Employed', 'Debt_to_Capital_Ratio',
+            'Capital_to_Debt_Ratio', 'Profitability_Index', 'Financial_Leverage_Ratio'
+        ]
+
+        # Verificar se todas as colunas existem no DataFrame
+        colunas_existentes = [col for col in colunas_para_arredondar if col in df_cleaned.columns]
+        faltando = set(colunas_para_arredondar) - set(colunas_existentes)
+
+        if faltando:
+            print("As seguintes colunas não foram encontradas no DataFrame e serão ignoradas:")
+            print(faltando)
+
+        # Arredondar as colunas existentes para 4 casas decimais
+        df_cleaned[colunas_existentes] = df_cleaned[colunas_existentes].round(4)
+
+        df_balance_dre_ind = df_cleaned
+
+        # Caminhos para os arquivos de ativo e passivo
+        caminho_cotacao = f"{path_data}dados_tratados/preco_acoes_final3_cnpj.csv"
+               
+        # Carrega os arquivos de ativo e passivo sem configurações adicionais
+        cotacao_hist = pd.read_csv(caminho_cotacao)
+
+        # Convert date columns to datetime
+        df_balance_dre_ind['DT_FIM_EXERC'] = pd.to_datetime(df_balance_dre_ind['DT_FIM_EXERC'])
+        cotacao_hist['data_pregao'] = pd.to_datetime(cotacao_hist['data_pregao'])
+
+        # Function to find the nearest available date
+        def encontrar_data_proxima(data, datas_disponiveis):
+            datas_diferenca = datas_disponiveis - data
+            datas_diferenca_pos = datas_diferenca[datas_diferenca >= pd.Timedelta(0)]
+            if not datas_diferenca_pos.empty:
+                return datas_disponiveis[datas_diferenca_pos.idxmin()]
+            return datas_disponiveis[datas_diferenca.abs().idxmin()]
+
+        # Transform the unique date series into a list for efficient comparison
+        datas_unicas = pd.Series(cotacao_hist['data_pregao'].unique())
+
+        # Apply the function to find the nearest available date for each record
+        df_balance_dre_ind['data_pregao'] = df_balance_dre_ind['DT_FIM_EXERC'].apply(lambda x: encontrar_data_proxima(x, datas_unicas))
+
+        # Merge the two datasets
+        df_merged = pd.merge(
+            df_balance_dre_ind, 
+            cotacao_hist[['CNPJ', 'cod_negociacao', 'data_pregao', 'preco_ultimo_negocio']],
+            left_on=['CNPJ', 'data_pregao'], 
+            right_on=['CNPJ', 'data_pregao'], 
+            how='left'
+        )
+
+        # Sort by CNPJ and DT_FIM_EXERC to prepare for percentage change calculation
+        df_merged_sorted = df_merged.sort_values(by=['CNPJ', 'DT_FIM_EXERC'])
+
+        # Calculate the percentage change in stock prices for each company
+        df_merged_sorted['variacao_percentual'] = df_merged_sorted.groupby('CNPJ')['preco_ultimo_negocio'].pct_change() * 100
+
+        # Remove rows where percentage variation is NaN (resulting from pct_change)
+        df_merged_sorted.dropna(subset=['variacao_percentual'], inplace=True)
+
+        # Verifica e cria o diretório consolidated_active_passive se não existir
+        output_dir = f"{path_data}estudo_balance__dre_cot"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Salva o DataFrame consolidado    
+        df_merged_sorted.to_csv(f"{output_dir}/df_balance_dre_cot.csv", index=False)
+
+    
 ## -----------## 
 
 
-    ...
-def transformation_cvm_dre():
+""" def transformation_cvm_dre():
     # Função para consolidar dados de DRE (Demonstração de Resultados) individual
-    consolidate_dre_data()
+    consolidate_dre_data() """
 
 def consolidate_dre_data():
     # Caminho para o arquivo de DRE individual
@@ -440,7 +701,7 @@ def dre_resume_data():
         'CNPJ', 'Ticker', 'DENOM_CIA', 'CD_CVM', 'DT_FIM_EXERC','Resultado Operacional Consolidado', 'Lucro/Prejuízo Consolidado'
     ]]
 
-     # Verifica e cria o diretório consolidated_active_passive se não existir
+    # Verifica e cria o diretório consolidated_active_passive se não existir
     output_dir = f"{path_data}dre_resume"
     os.makedirs(output_dir, exist_ok=True)
     
@@ -448,6 +709,13 @@ def dre_resume_data():
     df_pivot_dre_tri_resume_res.to_csv(f"{output_dir}/dre_tri_res.csv", index=False)
 
 ## Nova Função ---- Dre Estudo
+
+def dre_metrics():
+
+
+
+
+
 
 
 
@@ -481,6 +749,147 @@ def consolidate_cot_hist_resume():
 
 
 ## Nova Função - Estudo da Cotação
+
+def cotacao_metrics():
+
+        # Caminhos para os arquivos de ativo e passivo
+        caminho_acoes_cnpj = f"{path_data}/cnpj_acoes_b3.csv"
+        caminho_cotacao_hist = f"{path_data}resume_cotacao_hist/preco_acoes_final3_cnpj.csv"
+        caminho_balanceresume = f"{path_data}balance_resume/df_balancedata_tri_final.csv"       
+    
+        # Carrega os arquivos de ativo e passivo sem configurações adicionais
+        df_cnpj_acoes_b3 = pd.read_csv(caminho_acoes_cnpj)
+        cotacao_hist = pd.read_csv(caminho_cotacao_hist)
+        df_balance = pd.read_csv(caminho_balanceresume)
+
+        # Renomear colunas no segundo dataframe para facilitar a fusão dos datasets
+        df_cnpj_acoes_b3_clean = df_cnpj_acoes_b3.rename(columns={
+            "CNPJ das empresas listadas na B3": "Ticker",
+            "Unnamed: 1": "Denominação social",
+            "Unnamed: 2": "Nome de pregão",
+            "Unnamed: 3": "CNPJ"
+        })
+
+        # Remover a primeira linha que contém os cabeçalhos duplicados
+        df_cnpj_acoes_b3_clean = df_cnpj_acoes_b3_clean.drop(index=0)
+
+        # Corrigir o formato do CNPJ para garantir a correspondência entre os dataframes
+        df_cnpj_acoes_b3_clean['CNPJ'] = df_cnpj_acoes_b3_clean['CNPJ'].str.replace(r'\D', '', regex=True)
+        cotacao_hist['CNPJ'] = cotacao_hist['CNPJ'].apply(lambda x: f'{int(x):014d}' if pd.notna(x) else '00000000000000')
+
+        # Realizar o merge dos datasets com base no CNPJ e mantendo o Ticker
+        df_merged_with_ticker = pd.merge(
+            cotacao_hist, 
+            df_cnpj_acoes_b3_clean[['Ticker', 'CNPJ']], 
+            left_on='CNPJ', 
+            right_on='CNPJ', 
+            how='inner'
+        )
+
+        # Atualizar o cotacao_hist com os dados resultantes do merge
+        cotacao_hist = df_merged_with_ticker
+
+                # Ensure the 'data_pregao' column in cotacao_hist is in datetime format
+        cotacao_hist['data_pregao'] = pd.to_datetime(cotacao_hist['data_pregao'], format='%Y%m%d', errors='coerce')
+
+        # Function to find the nearest available date in cotacao_hist if exact match isn't found
+        def get_nearest_date(target_date, date_series):
+            nearest_date = date_series[date_series >= target_date].min()
+            return nearest_date if pd.notna(nearest_date) else date_series.max()
+
+        # Initialize a list to store results
+        matched_prices = []
+
+        # Loop through each unique date in the df_balance's 'DT_FIM_EXERC'
+        for dt in df_balance['DT_FIM_EXERC'].unique():
+            # Find the nearest date in the cotacao_hist
+            nearest_date = get_nearest_date(dt, cotacao_hist['data_pregao'])
+            
+            # Select the rows from cotacao_hist for this nearest date
+            matched_data = cotacao_hist[cotacao_hist['data_pregao'] == nearest_date].copy()
+            
+            # Add a new column to indicate the original requested date and the nearest date used
+            matched_data['data_original'] = dt
+            matched_data['data_utilizada'] = nearest_date
+            
+            # Append matched data to the list
+            matched_prices.append(matched_data)
+
+
+        # Concatenate the results into a DataFrame
+        df_matched_prices = pd.concat(matched_prices).reset_index(drop=True)
+
+                # Reorganize the dataframe columns as requested: data_original, CNPJ, cod_negociacao, noma_empresa, preco_ultimo_negocio
+        cotacao_hist_resume = df_matched_prices[['data_original', 'CNPJ', 'cod_negociacao', 'noma_empresa', 'preco_ultimo_negocio']]
+        # Remover duplicatas com base nas colunas data_original, CNPJ e cod_negociacao, mantendo a primeira ocorrência
+        cotacao_hist_resume.drop_duplicates(subset=['data_original', 'CNPJ', 'cod_negociacao'], keep='first')
+
+        pd.set_option('display.float_format', '{:.4f}'.format)
+
+        # Certifique-se de que a coluna de data esteja no formato datetime
+        cotacao_hist_resume['data_original'] = pd.to_datetime(cotacao_hist_resume['data_original'])
+
+        # Organizar o dataframe por empresa e data
+        cotacao_hist_sorted = cotacao_hist_resume.sort_values(by=['noma_empresa', 'data_original'])
+
+        # Preço inicial (primeiro preço disponível)
+        preco_inicial = cotacao_hist_sorted.groupby('noma_empresa')['preco_ultimo_negocio'].first()
+
+        # Preço final (último preço disponível)
+        preco_final = cotacao_hist_sorted.groupby('noma_empresa')['preco_ultimo_negocio'].last()
+
+        # Calcular o retorno acumulado
+        retorno_acumulado = (preco_final - preco_inicial) / preco_inicial
+        cotacao_hist_sorted['retorno_acumulado'] = cotacao_hist_sorted['noma_empresa'].map(retorno_acumulado)
+
+        # Calcular o número de dias entre a primeira e a última data para cada empresa
+        cotacao_hist_sorted['dias'] = cotacao_hist_sorted.groupby('noma_empresa')['data_original'].transform(lambda x: (x.max() - x.min()).days)
+
+        # Converter os dias em anos
+        cotacao_hist_sorted['anos'] = cotacao_hist_sorted['dias'] / 365.25
+
+        # Calcular o CAGR para cada empresa
+        cotacao_hist_sorted['CAGR'] = ((cotacao_hist_sorted.groupby('noma_empresa')['preco_ultimo_negocio'].transform('last') / 
+                                    cotacao_hist_sorted.groupby('noma_empresa')['preco_ultimo_negocio'].transform('first')) ** 
+                                    (1 / cotacao_hist_sorted['anos'])) - 1
+
+        # Não temos retorno diário, mas podemos calcular o retorno trimestral
+        cotacao_hist_sorted['retorno_trimestral'] = cotacao_hist_sorted.groupby('noma_empresa')['preco_ultimo_negocio'].pct_change()
+
+        # Calcular a volatilidade (desvio padrão dos retornos trimestrais)
+        volatilidade = cotacao_hist_sorted.groupby('noma_empresa')['retorno_trimestral'].std()
+
+        # Juntar a volatilidade ao dataframe
+        cotacao_hist_sorted['volatilidade'] = cotacao_hist_sorted['noma_empresa'].map(volatilidade)
+
+        # Calcular a volatilidade anualizada
+        cotacao_hist_sorted['volatilidade_anualizada'] = cotacao_hist_sorted['volatilidade'] * np.sqrt(4)  # Anualizando com 4 trimestres por ano
+
+        # Calcular o Sharpe Ratio (assumindo taxa livre de risco = 0)
+        taxa_livre_risco = 0
+        cotacao_hist_sorted['sharpe_ratio'] = (cotacao_hist_sorted['CAGR'] - taxa_livre_risco) / cotacao_hist_sorted['volatilidade_anualizada']
+
+        # Lista das colunas que devem ser arredondadas
+        colunas_para_arredondar = [
+            'retorno_acumulado', 'dias', 'anos', 'CAGR', 
+            'retorno_trimestral', 'volatilidade', 
+            'volatilidade_anualizada', 'sharpe_ratio'
+        ]
+
+        # Verificar se as colunas existem no DataFrame antes de arredondar
+        colunas_existentes = [col for col in colunas_para_arredondar if col in cotacao_hist_sorted.columns]
+
+        # Arredondar as colunas existentes para 4 casas decimais
+        cotacao_hist_sorted[colunas_existentes] = cotacao_hist_sorted[colunas_existentes].round(4)
+
+        # Verifica e cria o diretório consolidated_active_passive se não existir
+        output_dir = f"{path_data}estudo_cotacao"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Salva o DataFrame consolidado    
+        cotacao_hist_sorted.to_csv(f"{output_dir}/df_cothist_metricas.csv", index=False)
+
+
 
 
 
